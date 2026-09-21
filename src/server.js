@@ -2,11 +2,12 @@ import express from "express";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  AuthStorage,
   createAgentSession,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+
+const modelRuntime = await ModelRuntime.create();
 
 const PORT = Number(process.env.PORT ?? 11435);
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -24,8 +25,6 @@ const PI_MODEL = process.env.PI_MODEL;
 const DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
 const tools = parseTools(process.env.PI_TOOLS);
 
-const authStorage = AuthStorage.create();
-const modelRegistry = ModelRegistry.create(authStorage);
 const app = express();
 
 app.use(express.json({ limit: "25mb" }));
@@ -129,7 +128,7 @@ async function createPiSession() {
     cwd: WORKSPACE,
     sessionManager: SessionManager.inMemory(WORKSPACE),
     authStorage,
-    modelRegistry,
+    modelRuntime,
     ...(model ? { model } : {}),
     ...(tools ? { tools } : {}),
   });
@@ -151,7 +150,8 @@ function resolveConfiguredModel() {
     throw new Error("Set both PI_PROVIDER and PI_MODEL, or set PI_MODEL as provider/model-id.");
   }
 
-  const model = modelRegistry.find(provider, modelId);
+  const model = modelRuntime.getModel(provider, modelId);
+
   if (!model) {
     throw new Error(`Pi model not found: ${provider}/${modelId}`);
   }
