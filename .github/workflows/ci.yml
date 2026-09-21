@@ -2,7 +2,6 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 
@@ -43,13 +42,13 @@ jobs:
         run: docker build --pull -f Dockerfile.pi-bridge -t pibot:ci .
       - name: Verify required tools as the non-root runtime user
         run: |
-          docker run --rm --user node --entrypoint bash pibot:ci -lc \
-            'test "$(id -u)" != 0 && command -v bash && command -v python3 && command -v git && command -v curl && command -v pi'
+          docker run --rm --entrypoint bash pibot:ci -c \
+            'test "$(id -u)" != 0 && command -v bash && command -v python3 && command -v git && command -v curl && command -v pi && test -w /workspace'
       - name: Exercise the authenticated health endpoint
         run: |
           set -euo pipefail
           docker run -d --name pibot-ci -p 127.0.0.1:11436:11435 \
-            --user node --cap-drop=ALL --security-opt no-new-privileges:true \
+            --cap-drop=ALL --security-opt no-new-privileges:true \
             -e PI_BRIDGE_API_KEY=ci-smoke-key pibot:ci
           trap 'docker rm -f pibot-ci >/dev/null 2>&1 || true' EXIT
           for attempt in $(seq 1 30); do
