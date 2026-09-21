@@ -2,6 +2,11 @@ import express from "express";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  progressDeltaFromEvent,
+  reasoningDeltaFromEvent,
+  textDeltaFromEvent,
+} from "./event-format.js";
+import {
   createAgentSession,
   ModelRegistry,
   ModelRuntime,
@@ -16,6 +21,7 @@ const FILE_DOWNLOAD_KEY = process.env.PI_FILE_DOWNLOAD_KEY;
 const MODEL_ID = process.env.PI_OPENWEBUI_MODEL ?? "pi-agent";
 const PUBLIC_BASE_URL = process.env.PI_PUBLIC_BASE_URL ?? `http://${HOST}:${PORT}`;
 const SHOW_PROGRESS = parseBoolean(process.env.PI_SHOW_PROGRESS, true);
+const SHOW_REASONING = parseBoolean(process.env.PI_SHOW_REASONING, false);
 const PI_PROVIDER = process.env.PI_PROVIDER;
 const PI_MODEL = process.env.PI_MODEL;
 
@@ -161,12 +167,15 @@ async function handleBlockingCompletion(req, res, prompt) {
   const completionId = `chatcmpl-pi-${Date.now()}`;
   let session;
   let output = "";
+  let reasoning = "";
 
   try {
     ({ session } = await createPiSession());
     session.subscribe((event) => {
       const delta = textDeltaFromEvent(event);
       if (delta) output += delta;
+      const reasoningDelta = reasoningDeltaFromEvent(event, SHOW_REASONING);
+      if (reasoningDelta) reasoning += reasoningDelta;
     });
 
     await session.prompt(prompt);
@@ -179,7 +188,11 @@ async function handleBlockingCompletion(req, res, prompt) {
       choices: [
         {
           index: 0,
-          message: { role: "assistant", content: output },
+          message: {
+            role: "assistant",
+            content: output,
+            ...(reasoning ? { reasoning_content: reasoning } : {}),
+          },
           finish_reason: "stop",
         },
       ],
@@ -221,8 +234,21 @@ async function handleStreamingCompletion(req, res, prompt) {
     });
 
     session.subscribe((event) => {
-      const delta = textDeltaFromEvent(event) || progressDeltaFromEvent(event);
-      if (!delta || res.writableEnded) return;
+      if (res.writableEnded) return;
+
+      const reasoningDelta = reasoningDeltaFromEvent(event, SHOW_REASONING);
+      if (reasoningDelta) {
+        writeSse({
+          id: completionId,
+          object: "chat.completion.chunk",
+          created: Math.floor(Date.now() / 1000),
+          model,
+          choices: [{ index: 0, delta: { reasoning_content: reasoningDelta }, finish_reason: null }],
+        });
+      }
+
+      const delta = textDeltaFromEvent(event) || progressDeltaFromEvent(event, SHOW_PROGRESS);
+      if (!delta) return;
       writeSse({
         id: completionId,
         object: "chat.completion.chunk",
@@ -254,33 +280,6 @@ async function handleStreamingCompletion(req, res, prompt) {
   } finally {
     session?.dispose?.();
   }
-}
-
-function textDeltaFromEvent(event) {
-  if (
-    event?.type === "message_update" &&
-    event.assistantMessageEvent?.type === "text_delta"
-  ) {
-    return event.assistantMessageEvent.delta ?? "";
-  }
-  return "";
-}
-
-function progressDeltaFromEvent(event) {
-  if (!SHOW_PROGRESS) return "";
-
-  if (event?.type === "agent_start") return "\n\n⏳ Pi is working...\n";
-  if (event?.type === "tool_execution_start") {
-    return `\n\n🔧 Running tool: ${event.toolName ?? "unknown"}...\n`;
-  }
-  if (event?.type === "tool_execution_end") {
-    const name = event.toolName ?? "tool";
-    return event.isError ? `\n⚠️ ${name} finished with an error.\n` : `\n✅ ${name} finished.\n`;
-  }
-  if (event?.type === "compaction_start") return "\n\n🧹 Compacting context...\n";
-  if (event?.type === "auto_retry_start") return "\n\n🔁 Retrying request...\n";
-
-  return "";
 }
 
 function messagesToPrompt(messages) {

@@ -349,7 +349,8 @@ If running direct mode, bind carefully, use a strong `.bridge-key`, and expose i
 | `PI_BRIDGE_API_KEY` | unset | Required bearer token for chat/model endpoints |
 | `PI_FILE_DOWNLOAD_KEY` | unset | Optional separate key for browser file downloads |
 | `PI_TOOLS` | read-only default in code; Docker uses full tools | Comma-separated Pi tools |
-| `PI_SHOW_PROGRESS` | `true` | Stream progress messages such as tool start/end |
+| `PI_SHOW_PROGRESS` | `true` | Stream sanitized progress messages such as tool start/end; arguments and output are never included |
+| `PI_SHOW_REASONING` | `false` | Opt in to separate OpenAI-compatible `reasoning_content`; reasoning is never mixed into answer text |
 | `PI_PROVIDER` | unset | Optional provider override |
 | `PI_MODEL` | unset | Optional model override |
 | `BIND_HOST` | launcher default `127.0.0.1` | Docker launcher host interface to publish on; use a Tailscale IP for trusted remote Open WebUI |
