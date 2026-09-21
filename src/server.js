@@ -2,9 +2,9 @@ import express from "express";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  AuthStorage,
   createAgentSession,
   ModelRegistry,
+  ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 
@@ -24,8 +24,8 @@ const PI_MODEL = process.env.PI_MODEL;
 const DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
 const tools = parseTools(process.env.PI_TOOLS);
 
-const authStorage = AuthStorage.create();
-const modelRegistry = ModelRegistry.create(authStorage);
+const modelRuntime = await ModelRuntime.create();
+const modelRegistry = new ModelRegistry(modelRuntime);
 const app = express();
 
 app.use(express.json({ limit: "25mb" }));
@@ -128,8 +128,7 @@ async function createPiSession() {
   return createAgentSession({
     cwd: WORKSPACE,
     sessionManager: SessionManager.inMemory(WORKSPACE),
-    authStorage,
-    modelRegistry,
+    modelRuntime,
     ...(model ? { model } : {}),
     ...(tools ? { tools } : {}),
   });
@@ -287,9 +286,9 @@ function progressDeltaFromEvent(event) {
 function messagesToPrompt(messages) {
   if (!Array.isArray(messages)) return "";
 
-  return [basePromptHints(), ...messages]
+  const blocks = messages
     .map((message) => {
-      if (typeof message === "string") return message;
+      if (typeof message === "string") return message.trim() ? message : "";
       const role = message?.role ?? "user";
       const content = normalizeContent(message?.content);
       if (!content.trim()) return "";
@@ -298,8 +297,10 @@ function messagesToPrompt(messages) {
       if (role === "tool") return `Tool result:\n${content}`;
       return `User:\n${content}`;
     })
-    .filter(Boolean)
-    .join("\n\n---\n\n");
+    .filter(Boolean);
+
+  if (blocks.length === 0) return "";
+  return [basePromptHints(), ...blocks].join("\n\n---\n\n");
 }
 
 function webhookPayloadToPrompt(message, context) {
@@ -308,6 +309,7 @@ function webhookPayloadToPrompt(message, context) {
   const contextBlock = contextText.trim() ? `Webhook context:\n${contextText}` : "";
   const userBlock = content.trim() ? `User:\n${content}` : "";
 
+  if (!contextBlock && !userBlock) return "";
   return [basePromptHints(), contextBlock, userBlock]
     .filter(Boolean)
     .join("\n\n---\n\n");

@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Check JavaScript syntax
+        run: npm run check
+      - name: Run tests
+        run: npm test
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  container:
+    name: Container smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build --pull -f Dockerfile.pi-bridge -t pibot:ci .
+      - name: Verify required tools as the non-root runtime user
+        run: |
+          docker run --rm --user node --entrypoint bash pibot:ci -lc \
+            'test "$(id -u)" != 0 && command -v bash && command -v python3 && command -v git && command -v curl && command -v pi'
+      - name: Exercise the authenticated health endpoint
+        run: |
+          set -euo pipefail
+          docker run -d --name pibot-ci -p 127.0.0.1:11436:11435 \
+            --user node --cap-drop=ALL --security-opt no-new-privileges:true \
+            -e PI_BRIDGE_API_KEY=ci-smoke-key pibot:ci
+          trap 'docker rm -f pibot-ci >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' \
+              -H 'Authorization: Bearer ci-smoke-key' \
+              http://127.0.0.1:11436/health || true)
+            [ "$code" = 200 ] && break
+            sleep 1
+          done
+          test "$code" = 200
+          grep -q '"ok":true' /tmp/health.json
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:11436/health)" = 401

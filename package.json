@@ -2,13 +2,16 @@
   "name": "pibot",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "npm@10.9.8",
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "start": "node src/server.js"
+    "check": "node --check src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "latest",
-    "express": "latest"
+    "@earendil-works/pi-coding-agent": "0.86.1",
+    "express": "5.2.1"
   }
 }
