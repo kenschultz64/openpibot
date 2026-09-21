@@ -1,40 +1,45 @@
-FROM node:24-bookworm-slim
-
-USER root
+# Multi-stage build: separate build and runtime environments
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-      bash \
-      python3 \
-      python3-pip \
-      python3-venv \
-      python-is-python3 \
-      git \
-      curl \
-      ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# Set production environment to minimize dependency tree
+ENV NODE_ENV=production
 
-RUN npm install -g @earendil-works/pi-coding-agent
-
+# Copy package files and install dependencies (cached unless package*.json changes)
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --no-audit --no-fund && \
+    npm cache clean --force
 
+# Copy application source
 COPY src ./src
 
-RUN mkdir -p /workspace /home/node/.pi/agent \
-    && chown -R node:node /workspace /home/node/.pi
+# Runtime stage - minimal image
+FROM node:24-alpine
 
-EXPOSE 11435
+WORKDIR /app
 
-ENV HOST=0.0.0.0 \
+# Production environment and app config
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
     PORT=11435 \
     PI_WORKSPACE=/workspace \
     PI_TOOLS=read,bash,edit,write,grep,find,ls \
     PI_SHOW_PROGRESS=true \
-    HOME=/home/node
+    HOME=/home/node \
+    PATH="${PATH}:/app/node_modules/.bin"
 
-SHELL ["/bin/bash", "-lc"]
+# Install runtime-only dependencies
+RUN apk add --no-cache ca-certificates python3 py3-pip git
+
+# Copy installed dependencies and source from builder stage
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/src ./src
+RUN mkdir -p /workspace && chmod 777 /workspace
+RUN mkdir -p /home/node/.pi && chown -R node:node /home/node/.pi
+
+# Run as non-root user for security
+USER node
+EXPOSE 11435
 
 CMD ["node", "src/server.js"]
